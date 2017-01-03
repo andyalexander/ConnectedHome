@@ -9,16 +9,15 @@
 #include <RCSwitch.h>
 RCSwitch mySwitch = RCSwitch();
 
+//sniffer
+#define RESEND_SNIFFED_VALUES 10
+RCSwitch rf315Switch = RCSwitch();
+
+
 #define LED     D0        // Led in NodeMCU at pin GPIO16 (D0).
 #define SWITCH1 D2
 
 #define SWITCH_GROUP 1    // main group for switch, the primary dial on the switch istelf
-
-// Our first sensor, a cheap DHT11 temperature and humidty sensor
-#include <DHT.h>
-#define DHTTYPE DHT11 //21 or 22 also an option
-#define DHTPIN 5
-DHT dht(DHTPIN, DHTTYPE);
 
 // BME280 sensor
 #include <BME280I2C.h>
@@ -136,6 +135,49 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
 }
 
+// simple decimal-to-binary-ascii procedure
+char *tobin32(unsigned long x)
+{
+        static char b[33];
+        b[32] = '\0';
+
+        for ( int z = 0; z < 32; z++) {
+                b[31 - z] = ((x >> z) & 0x1) ? '1' : '0';
+        }
+
+        return b;
+}
+
+void process_rf_value(RCSwitch rfswitch, int rf)
+{
+        char str[120];
+        unsigned long value;
+
+        // flash a light to show transmission
+        //digitalWrite(LED, true);
+
+        value = rfswitch.getReceivedValue();
+        if (value) {
+                sprintf(str, "[+] %d Received: %s / %010lu / %02d bit / Protocol = %d",
+                        rf, tobin32(value), value, rfswitch.getReceivedBitlength(), rfswitch.getReceivedProtocol() );
+        } else {
+                sprintf(str, "[-] %d Received: Unknown encoding (0)", rf);
+        }
+        Serial.println(str);
+        //Serial.print("Raw data: ");
+        //Serial.println(tobin32(rfswitch.getReceivedRawdata()));
+
+        // resend the sniffed value (RESEND_SNIFFED_VALUES times)
+        //rfswitch.send(value, rfswitch.getReceivedBitlength());
+
+        // reset the switch to allow more data to come
+        rfswitch.resetAvailable();
+        // stop light to show end of transmission
+        //digitalWrite(LED, false);
+}
+
+
+
 
 long lastMsg = 0;
 float temp = 0.0;
@@ -147,7 +189,11 @@ void setup() {
   pinMode(LED, OUTPUT);   // LED pin as output.
   digitalWrite(LED, HIGH);    // inverse low /high
 
-  mySwitch.enableTransmit(D4);
+  // 433 mhz
+  mySwitch.enableTransmit(D4);      // on pin D4
+
+  //315 mhz
+  rf315Switch.enableReceive(D7);    // on pin D7
 
   pinMode(SWITCH1, OUTPUT);
   digitalWrite(SWITCH1, HIGH);    // for security, close the switch if reset...
@@ -157,9 +203,7 @@ void setup() {
   client.setServer(mqtt_server, 1883);
   client.setCallback(callback);     // define the callback function when we receive ANY message
 
-  // Start sensors
-  dht.begin();
-
+  // start the bme sensor
   while(!bme.begin(BME_SDA, BME_SCL)){
     Serial.println("Could not find BME280I2C sensor!");
     delay(1000);
@@ -174,20 +218,20 @@ void loop() {
   }
   client.loop();
 
+  // check 315 receiver and act on it
+  if (rf315Switch.available()) {
+      Serial.println("Switch received data:");
+      process_rf_value(rf315Switch, 315);
+  }
+
   // only update every 10 seconds
   long now = millis();
   if (now - lastMsg > 10000) {
     lastMsg = now;
 
-    // float newTemp = dht.readTemperature();
-    float newHum = dht.readHumidity();
     float newTemp = bme.temp(true);
-    // float newHum = bme.hum();
+    float newHum = bme.hum();
     float newPress = bme.press(0x1);
-
-    // float newHum2 = bme.hum();
-    // Serial.print("Humidity2: ");
-    // Serial.println(newHum2);
 
     if (checkBound(newTemp, temp, diff)) {
       temp = newTemp;
