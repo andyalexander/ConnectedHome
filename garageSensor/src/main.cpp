@@ -9,15 +9,10 @@
 #include <RCSwitch.h>
 RCSwitch mySwitch = RCSwitch();
 
-//sniffer
-#define RESEND_SNIFFED_VALUES 10
-RCSwitch rf315Switch = RCSwitch();
-
-
 #define LED     D0        // Led in NodeMCU at pin GPIO16 (D0).
-#define SWITCH1 D2
+#define SWITCH1 D2        // Digital pin for relay
 
-#define SWITCH_GROUP 1    // main group for switch, the primary dial on the switch istelf
+#define SWITCH_GROUP 1    // main group for 433switch, the primary dial on the switch istelf
 
 // BME280 sensor
 #include <BME280I2C.h>
@@ -38,7 +33,7 @@ unsigned long readTime;
 #define humidity_topic "openhab/garage/humidity"
 #define temperature_topic "openhab/garage/temperature"
 #define pressure_topic "openhab/garage/pressure"
-#define switch1_topic "openhab/garage/door1"
+#define switch1_topic "openhab/garage/switch1"
 #define switch2_topic "openhab/switch/433"
 
 WiFiClient espClient;
@@ -101,7 +96,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
   Serial.println();
 
   if (!strcmp(topic, switch1_topic)) {
-    Serial.print("Door message received: ");
+    Serial.print("Switch message received: ");
 
     // Switch on the LED if an 1 was received as first character
     if ((char)payload[0] == '1') {
@@ -135,50 +130,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
 }
 
-// simple decimal-to-binary-ascii procedure
-char *tobin32(unsigned long x)
-{
-        static char b[33];
-        b[32] = '\0';
-
-        for ( int z = 0; z < 32; z++) {
-                b[31 - z] = ((x >> z) & 0x1) ? '1' : '0';
-        }
-
-        return b;
-}
-
-void process_rf_value(RCSwitch rfswitch, int rf)
-{
-        char str[120];
-        unsigned long value;
-
-        // flash a light to show transmission
-        //digitalWrite(LED, true);
-
-        value = rfswitch.getReceivedValue();
-        if (value) {
-                sprintf(str, "[+] %d Received: %s / %010lu / %02d bit / Protocol = %d",
-                        rf, tobin32(value), value, rfswitch.getReceivedBitlength(), rfswitch.getReceivedProtocol() );
-        } else {
-                sprintf(str, "[-] %d Received: Unknown encoding (0)", rf);
-        }
-        Serial.println(str);
-        //Serial.print("Raw data: ");
-        //Serial.println(tobin32(rfswitch.getReceivedRawdata()));
-
-        // resend the sniffed value (RESEND_SNIFFED_VALUES times)
-        //rfswitch.send(value, rfswitch.getReceivedBitlength());
-
-        // reset the switch to allow more data to come
-        rfswitch.resetAvailable();
-        // stop light to show end of transmission
-        //digitalWrite(LED, false);
-}
-
-
-
-
 long lastMsg = 0;
 float temp = 0.0;
 float hum = 0.0;
@@ -192,9 +143,7 @@ void setup() {
   // 433 mhz
   mySwitch.enableTransmit(D4);      // on pin D4
 
-  //315 mhz
-  rf315Switch.enableReceive(D7);    // on pin D7
-
+  //Relay setup
   pinMode(SWITCH1, OUTPUT);
   digitalWrite(SWITCH1, HIGH);    // for security, close the switch if reset...
 
@@ -217,12 +166,6 @@ void loop() {
     reconnect();
   }
   client.loop();
-
-  // check 315 receiver and act on it
-  if (rf315Switch.available()) {
-      Serial.println("Switch received data:");
-      process_rf_value(rf315Switch, 315);
-  }
 
   // only update every 10 seconds
   long now = millis();

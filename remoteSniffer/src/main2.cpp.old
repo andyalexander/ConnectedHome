@@ -1,0 +1,81 @@
+#include <Losant.h>
+#include <Arduino.h>
+
+// You may need to put a 100nf capacitor between output and ground on the receiver
+// to compensate for noise
+
+
+//Define settings
+const int INPUT_PIN = D7;                                       //Input pin
+const unsigned int MAX_SAMPLE = 2048;                           //Maximum number of samples to record
+const unsigned long MAX_TIME = 1000UL;                        //Maximum record time after start pulse (msec)
+
+//Variables used in the ISR
+volatile boolean running = false;
+volatile unsigned long last = 0;
+volatile unsigned int count = 0;
+volatile unsigned long samples[MAX_SAMPLE];
+
+//Pin change interrupt routine
+//Called when the state of the input pin changes
+void receiver()
+{
+  if (running) {                                               //If we are running
+    samples[count] = micros() - last;                          //Save the time from the last change to this one
+    last = micros();                                           //Reset the time of last change
+    count++;                                                   //Go to next buffer entry
+    if (count > MAX_SAMPLE) {                                  //If we are past the last entry
+      running = false;                                         // we stop
+    }
+  }
+}
+
+void setup() {
+  pinMode(INPUT_PIN,INPUT);
+  Serial.begin(9600);
+  while (!Serial) {};
+  Serial.println("RecordPin sketch started");
+}
+
+void loop() {
+  unsigned long startTime;
+  int startState = 0;
+
+  while (Serial.read() != -1) {};                              //Clear the serial input buffer
+  Serial.println("Send character to start");
+
+  while (Serial.available() < 1) {};                           //Wait until we receive the first character
+  while (Serial.read() != -1) {};                              //Clear the rest of the buffer
+
+  startState = digitalRead(INPUT_PIN);                         //Save the initial port state
+  attachInterrupt(digitalPinToInterrupt(INPUT_PIN), receiver, CHANGE);                        //Interrupt 0 = Pin 2
+  count = 0;
+  last = micros();
+  running = true;
+  Serial.print("Running. Send a character to stop");
+  startTime = millis();
+  while (running && ((millis() - startTime) < MAX_TIME)) {     //Run until the buffer is full, the time is up, or we receive a character
+    if (Serial.available() > 0) {                                  //Stop if we receive a character
+      running = false;
+    }
+  }
+  Serial.println("Stopped");
+  detachInterrupt(digitalPinToInterrupt(INPUT_PIN));
+  Serial.print("I recorded ");
+  Serial.print(count);
+  Serial.println(" samples");
+  for (unsigned int x = 0; x < count; x++) {
+    Serial.print(x);
+    Serial.print(" : Pin = ");
+    if (startState == 0) {
+      Serial.print("Low ");
+    } else {
+      Serial.print("High");
+    }
+    startState = !startState;
+    Serial.print(" for ");
+    Serial.print(samples[x]);
+    Serial.println(" usec");
+  }
+  Serial.println("--end--");
+}
