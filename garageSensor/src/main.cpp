@@ -24,8 +24,8 @@ unsigned long readTime;
 
 // #define wifi_ssid "ssid"
 // #define wifi_password "password"
-
 // #define mqtt_server "ip address"
+
 //#define mqtt_user "your_username"
 //#define mqtt_password "your_password"
 
@@ -33,11 +33,19 @@ unsigned long readTime;
 #define humidity_topic "openhab/garage/humidity"
 #define temperature_topic "openhab/garage/temperature"
 #define pressure_topic "openhab/garage/pressure"
-#define switch1_topic "openhab/garage/switch1"
-#define switch2_topic "openhab/switch/433"
+#define light_topic "openhab/garage/light_level"
+#define switch1_topic "openhab/garage/door1"
+#define switch2_topic "openhab/garage/433"
+#define log_topic "openhab/log"
+#define log_header "Garage: "
 
 WiFiClient espClient;
 PubSubClient client(espClient);
+
+void log(const char *message){
+  Serial.println(message);
+  client.publish(log_topic, message);
+}
 
 void setup_wifi() {
   delay(10);
@@ -85,6 +93,13 @@ bool checkBound(float newValue, float prevValue, float maxDiff) {
          (newValue < prevValue - maxDiff || newValue > prevValue + maxDiff);
 }
 
+float measure_light() {
+  float v = analogRead(A0);
+  //Serial.print("Light reading: ");
+  //Serial.println(v);
+  return v;
+}
+
 // function called when message received, set using the setCallback function
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived [");
@@ -98,22 +113,24 @@ void callback(char* topic, byte* payload, unsigned int length) {
   if (!strcmp(topic, switch1_topic)) {
     Serial.print("Switch message received: ");
 
-    // Switch on the LED if an 1 was received as first character
+    // Switch the LED if an 1 was received as first character
+    // This is a push button switch so on - wait - off will be the cycle
     if ((char)payload[0] == '1') {
       digitalWrite(LED, LOW);   // Turn the LED on (Note that LOW is the voltage level
-      digitalWrite(SWITCH1, LOW);
-      Serial.println("opened");
-    } else {
-      digitalWrite(LED, HIGH);  // Turn the LED off by making the voltage HIGH
       digitalWrite(SWITCH1, HIGH);
+      Serial.print("opened...");
+      delay(500);               // wait 1/2 seconds
+      digitalWrite(LED, HIGH);  // Turn the LED off by making the voltage HIGH
+      digitalWrite(SWITCH1, LOW);
       Serial.println("closed");
+    } else {
+      //Serial.println("Unknown payload for switch1");
     }
   }
 
   if (!strcmp(topic, switch2_topic)) {
     Serial.print("433 mhz switch: ");
 
-    //int switchNumber = atoi((char)payload[0]);
     int switchNumber = (char)payload[0] - '0'; // assumes max 9 switches - hack to conver the char to int
 
     if ((char)payload[2] == '1') {
@@ -126,8 +143,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
       Serial.println(" - off");
     }
   }
-
-
 }
 
 long lastMsg = 0;
@@ -135,6 +150,7 @@ float temp = 0.0;
 float hum = 0.0;
 float diff = 1.0;
 float press = 0.0;
+float light = 0.0;
 
 void setup() {
   pinMode(LED, OUTPUT);   // LED pin as output.
@@ -145,7 +161,6 @@ void setup() {
 
   //Relay setup
   pinMode(SWITCH1, OUTPUT);
-  digitalWrite(SWITCH1, HIGH);    // for security, close the switch if reset...
 
   Serial.begin(9600);
   setup_wifi();
@@ -175,6 +190,14 @@ void loop() {
     float newTemp = bme.temp(true);
     float newHum = bme.hum();
     float newPress = bme.press(0x1);
+    float newLight = measure_light();
+
+    if (checkBound(newLight, light, 50)) {
+      light = newLight;
+      Serial.print("New light level: ");
+      Serial.println(String(light).c_str());
+      client.publish(light_topic, String(light).c_str(), true);
+    }
 
     if (checkBound(newTemp, temp, diff)) {
       temp = newTemp;
